@@ -35,6 +35,16 @@ jobs:
           echo "Current directory: $(pwd)"
           echo "Directory contents:"
           ls -la
+          
+          # Navigate to the correct directory if it exists
+          if [ -d "jfrm" ]; then
+            echo "Found jfrm directory, navigating to it..."
+            cd jfrm
+            echo "New directory: $(pwd)"
+            echo "Directory contents:"
+            ls -la
+          fi
+          
           echo "cmd directory contents:"
           ls -la cmd/
           echo "cmd/jfrm directory contents:"
