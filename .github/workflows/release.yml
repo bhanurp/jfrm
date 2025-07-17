@@ -32,6 +32,14 @@ jobs:
       - name: Build for multiple platforms
         run: |
           echo "Building for multiple platforms..."
+          echo "Current directory: $(pwd)"
+          echo "Directory contents:"
+          ls -la
+          echo "cmd directory contents:"
+          ls -la cmd/
+          echo "cmd/jfrm directory contents:"
+          ls -la cmd/jfrm/
+          
           GOOS=darwin GOARCH=amd64 go build -o jfrm_darwin_amd64 ./cmd/jfrm
           GOOS=darwin GOARCH=arm64 go build -o jfrm_darwin_arm64 ./cmd/jfrm
           GOOS=linux GOARCH=amd64 go build -o jfrm_linux_amd64 ./cmd/jfrm
