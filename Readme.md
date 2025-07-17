@@ -23,7 +23,7 @@ brew install bhanurp/tap/jfrm
 # Clone and build
 git clone https://github.com/bhanurp/jfrm.git
 cd jfrm
-go build -o jfrm cmd/jfrm/main.go
+go build -o jfrm ./cmd/jfrm
 sudo mv jfrm /usr/local/bin/
 ```
 

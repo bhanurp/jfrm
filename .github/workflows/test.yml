@@ -25,7 +25,7 @@ jobs:
         run: go test -v ./...
           
       - name: Build
-        run: go build -o jfrm cmd/jfrm/main.go
+        run: go build -o jfrm ./cmd/jfrm
           
       - name: Test CLI
         run: |

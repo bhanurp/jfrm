@@ -5,7 +5,7 @@ BINARY_NAME=jfrm
 
 # Build the application
 build:
-	go build -o $(BINARY_NAME) cmd/jfrm/main.go
+	go build -o $(BINARY_NAME) ./cmd/jfrm
 
 # Clean build artifacts
 clean:
