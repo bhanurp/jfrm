@@ -15,7 +15,7 @@ A Go CLI tool for managing releases and dependencies for JFrog projects. This to
 
 ### Homebrew (Recommended)
 ```bash
-brew install bhanurp/tap/jfrm
+brew install bhanurp/jfrm-tap/jfrm
 ```
 
 ### Manual Installation
