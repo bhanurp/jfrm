@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -17,21 +21,37 @@ jobs:
         with:
           go-version: '1.23'
           
+      - name: Verify Go setup
+        run: |
+          go version
+          go env
+          
+      - name: Download dependencies
+        run: go mod download
+          
       - name: Build for multiple platforms
         run: |
+          echo "Building for multiple platforms..."
           GOOS=darwin GOARCH=amd64 go build -o jfrm_darwin_amd64 ./cmd/jfrm
           GOOS=darwin GOARCH=arm64 go build -o jfrm_darwin_arm64 ./cmd/jfrm
           GOOS=linux GOARCH=amd64 go build -o jfrm_linux_amd64 ./cmd/jfrm
           GOOS=linux GOARCH=arm64 go build -o jfrm_linux_arm64 ./cmd/jfrm
           GOOS=windows GOARCH=amd64 go build -o jfrm_windows_amd64.exe ./cmd/jfrm
           
+          echo "Build completed. Checking files:"
+          ls -la jfrm_*
+          
       - name: Create release assets
         run: |
+          echo "Creating release assets..."
           tar -czf jfrm_darwin_amd64.tar.gz jfrm_darwin_amd64
           tar -czf jfrm_darwin_arm64.tar.gz jfrm_darwin_arm64
           tar -czf jfrm_linux_amd64.tar.gz jfrm_linux_amd64
           tar -czf jfrm_linux_arm64.tar.gz jfrm_linux_arm64
           zip jfrm_windows_amd64.zip jfrm_windows_amd64.exe
+          
+          echo "Assets created. Checking files:"
+          ls -la *.tar.gz *.zip
           
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -43,6 +63,8 @@ jobs:
             jfrm_linux_arm64.tar.gz
             jfrm_windows_amd64.zip
           generate_release_notes: true
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -54,9 +76,9 @@ jobs:
       - name: Checkout tap repository
         uses: actions/checkout@v4
         with:
-          repository: bhanurp/homebrew-tap
+          repository: bhanurp/homebrew-jfrm
           token: ${{ secrets.GITHUB_TOKEN }}
-          path: homebrew-tap
+          path: jfrm-tap
           
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -68,27 +90,64 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/}
           echo "Updating formula for version: $VERSION"
           
-          # Download and calculate SHA256 for each platform
-          PLATFORMS=("darwin_amd64" "darwin_arm64" "linux_amd64" "linux_arm64")
+          # Create a temporary file for the updated formula
+          TEMP_FILE=$(mktemp)
           
-          for platform in "${PLATFORMS[@]}"; do
-            echo "Processing $platform..."
-            URL="https://github.com/bhanurp/jfrm/releases/download/$VERSION/jfrm_${platform}.tar.gz"
-            SHA256=$(curl -sL "$URL" | shasum -a 256 | cut -d' ' -f1)
-            echo "  URL: $URL"
-            echo "  SHA256: $SHA256"
-            
-            # Update the formula file
-            sed -i "s|url \"https://github.com/bhanurp/jfrm/releases/download/$VERSION/jfrm_${platform}.tar.gz\"|url \"$URL\"|g" homebrew-tap/Formula/jfrm.rb
-            sed -i "s|sha256 \"[a-f0-9]\{64\}\"|sha256 \"$SHA256\"|g" homebrew-tap/Formula/jfrm.rb
-          done
+          # Process each platform and update the formula using awk
+          awk -v version="$VERSION" '
+          BEGIN {
+              # Define platform patterns
+              platforms["darwin_arm64"] = "darwin_arm64"
+              platforms["darwin_amd64"] = "darwin_amd64" 
+              platforms["linux_arm64"] = "linux_arm64"
+              platforms["linux_amd64"] = "linux_amd64"
+          }
           
-          # Update version
-          sed -i "s|version \"[0-9.]*\"|version \"${VERSION#v}\"|g" homebrew-tap/Formula/jfrm.rb
+          {
+              line = $0
+              
+              # Update version
+              if (line ~ /version "/) {
+                  gsub(/version "[0-9.]*"/, "version \"" substr(version, 2) "\"")
+              }
+              
+              # Check if this line contains a platform URL
+              for (platform in platforms) {
+                  if (line ~ platform && line ~ /url/) {
+                      # Download and calculate SHA256 for this platform
+                      url = "https://github.com/bhanurp/jfrm/releases/download/" version "/jfrm_" platform ".tar.gz"
+                      cmd = "curl -sL \"" url "\" | shasum -a 256 | cut -d\" \" -f1"
+                      cmd | getline sha256
+                      close(cmd)
+                      
+                      print "  Processing " platform "..." > "/dev/stderr"
+                      print "  URL: " url > "/dev/stderr"
+                      print "  SHA256: " sha256 > "/dev/stderr"
+                      
+                      # Store the SHA256 for this platform
+                      sha256s[platform] = sha256
+                  }
+              }
+              
+              # Update SHA256 lines for each platform
+              for (platform in platforms) {
+                  if (line ~ platform && line ~ /sha256/) {
+                      if (sha256s[platform] != "") {
+                          gsub(/sha256 "[a-f0-9]{64}"/, "sha256 \"" sha256s[platform] "\"")
+                      }
+                  }
+              }
+              
+              print line
+          }
+          ' jfrm-tap/Formula/jfrm.rb > "$TEMP_FILE"
+          
+          # Replace the original file
+          mv "$TEMP_FILE" jfrm-tap/Formula/jfrm.rb
           
       - name: Commit and push changes
         run: |
-          cd homebrew-tap
+          cd jfrm-tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/jfrm.rb
