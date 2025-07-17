@@ -13,6 +13,21 @@ A Go CLI tool for managing releases and dependencies for JFrog projects. This to
 
 ## Installation
 
+### Homebrew (Recommended)
+```bash
+brew install bhanurp/tap/jfrm
+```
+
+### Manual Installation
+```bash
+# Clone and build
+git clone https://github.com/bhanurp/jfrm.git
+cd jfrm
+go build -o jfrm cmd/jfrm/main.go
+sudo mv jfrm /usr/local/bin/
+```
+
+### Go Install (Public Repository Only)
 ```bash
 go install github.com/bhanurp/jfrm/cmd/jfrm@latest
 ```
@@ -106,14 +121,41 @@ jfrm/
 ### Building
 
 ```bash
+make build
+# or
 go build -o jfrm cmd/jfrm/main.go
 ```
 
 ### Running Tests
 
 ```bash
+make test
+# or
 go test ./...
 ```
+
+### Creating Releases
+
+The release process is fully automated:
+
+```bash
+# Create a new release (this will trigger GitHub Actions)
+make release
+# or
+./scripts/create-release.sh v0.1.0
+```
+
+This will automatically:
+1. Create a Git tag
+2. Trigger GitHub Actions to build binaries
+3. Create a GitHub release with assets
+4. Update the Homebrew tap
+
+### Automated Workflows
+
+- **Test**: Runs on every push and PR to main branch
+- **Release**: Runs when you push a tag (v*)
+- **Homebrew Update**: Automatically updates the tap after release
 
 ## Contributing
 

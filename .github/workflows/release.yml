@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+          
+      - name: Build for multiple platforms
+        run: |
+          GOOS=darwin GOARCH=amd64 go build -o jfrm_darwin_amd64 cmd/jfrm/main.go
+          GOOS=darwin GOARCH=arm64 go build -o jfrm_darwin_arm64 cmd/jfrm/main.go
+          GOOS=linux GOARCH=amd64 go build -o jfrm_linux_amd64 cmd/jfrm/main.go
+          GOOS=linux GOARCH=arm64 go build -o jfrm_linux_arm64 cmd/jfrm/main.go
+          GOOS=windows GOARCH=amd64 go build -o jfrm_windows_amd64.exe cmd/jfrm/main.go
+          
+      - name: Create release assets
+        run: |
+          tar -czf jfrm_darwin_amd64.tar.gz jfrm_darwin_amd64
+          tar -czf jfrm_darwin_arm64.tar.gz jfrm_darwin_arm64
+          tar -czf jfrm_linux_amd64.tar.gz jfrm_linux_amd64
+          tar -czf jfrm_linux_arm64.tar.gz jfrm_linux_arm64
+          zip jfrm_windows_amd64.zip jfrm_windows_amd64.exe
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            jfrm_darwin_amd64.tar.gz
+            jfrm_darwin_arm64.tar.gz
+            jfrm_linux_amd64.tar.gz
+            jfrm_linux_arm64.tar.gz
+            jfrm_windows_amd64.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-homebrew-tap:
+    needs: release
+    runs-on: ubuntu-latest
+    if: github.repository == 'bhanurp/jfrm'
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: bhanurp/homebrew-tap
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: homebrew-tap
+          
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.0'
+          
+      - name: Calculate SHA256 hashes and update formula
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "Updating formula for version: $VERSION"
+          
+          # Download and calculate SHA256 for each platform
+          PLATFORMS=("darwin_amd64" "darwin_arm64" "linux_amd64" "linux_arm64")
+          
+          for platform in "${PLATFORMS[@]}"; do
+            echo "Processing $platform..."
+            URL="https://github.com/bhanurp/jfrm/releases/download/$VERSION/jfrm_${platform}.tar.gz"
+            SHA256=$(curl -sL "$URL" | shasum -a 256 | cut -d' ' -f1)
+            echo "  URL: $URL"
+            echo "  SHA256: $SHA256"
+            
+            # Update the formula file
+            sed -i "s|url \"https://github.com/bhanurp/jfrm/releases/download/$VERSION/jfrm_${platform}.tar.gz\"|url \"$URL\"|g" homebrew-tap/Formula/jfrm.rb
+            sed -i "s|sha256 \"[a-f0-9]\{64\}\"|sha256 \"$SHA256\"|g" homebrew-tap/Formula/jfrm.rb
+          done
+          
+          # Update version
+          sed -i "s|version \"[0-9.]*\"|version \"${VERSION#v}\"|g" homebrew-tap/Formula/jfrm.rb
+          
+      - name: Commit and push changes
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/jfrm.rb
+          git commit -m "Update jfrm to ${{ github.ref_name }}"
+          git push origin main 

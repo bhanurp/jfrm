@@ -40,3 +40,16 @@ docs:
 # Run in development mode
 dev: build
 	./$(BINARY_NAME) --help
+
+# Create a new release
+release:
+	@echo "Creating release..."
+	@read -p "Enter version (e.g., v0.1.0): " version; \
+	./scripts/create-release.sh $$version
+
+# Update Homebrew formula (run after release)
+update-formula:
+	@echo "Updating Homebrew formula..."
+	@read -p "Enter version (e.g., v0.1.0): " version; \
+	./scripts/update-formula.sh $$version; \
+	echo "Formula updated for version $$version"
