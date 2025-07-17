@@ -1,4 +1,4 @@
-# JFrog Release Manager (jfrm)
+# JFrogCLI Release Manager (jfrm)
 
 A Go CLI tool for managing releases and dependencies for JFrog projects. This tool automates the process of updating Go dependencies, analyzing repository changes, and generating comprehensive reports.
 
