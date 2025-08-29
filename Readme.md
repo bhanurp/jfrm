@@ -11,6 +11,12 @@ A Go CLI tool for managing releases and dependencies for JFrog projects. This to
 - **Pull Request Creation**: Automatically create PRs for dependency updates
 - **Version Analysis**: Determine appropriate release types based on changes
 
+## Upcoming features
+
+- **GitHub Action - Auto PR**: Automatically create a PR with all required dependency updates
+- **GitHub Action - Release chain**: Optionally create a PR for the next repository in the release chain
+- **Automated Releases**: Generate release notes and request approval before publishing a new release
+
 ## Installation
 
 ### Homebrew (Recommended)
@@ -85,6 +91,21 @@ The tool only manages dependencies from the following JFrog modules:
 - `github.com/jfrog/build-info-go`
 - `github.com/jfrog/gofrog`
 
+## Supported repositories
+
+- github.com/jfrog/jfrog-cli
+- github.com/jfrog/jfrog-cli-core/v2
+- github.com/jfrog/jfrog-client-go
+- github.com/jfrog/jfrog-cli-artifactory
+- github.com/jfrog/jfrog-cli-security
+- github.com/jfrog/build-info-go
+- github.com/jfrog/gofrog
+
+Notes:
+- Default base branch is `upstream/dev`.
+- For `jfrog/jfrog-cli-artifactory`, default base is `upstream/main`.
+- You can override via `--remote <remote>/<branch>` (e.g., `--remote upstream/master`).
+
 ## Project Structure
 
 ```
@@ -115,7 +136,6 @@ jfrm/
 
 ### Prerequisites
 
-- Go 1.23.6 or later
 - Git
 
 ### Building
@@ -134,7 +154,7 @@ make test
 go test ./...
 ```
 
-### Creating Releases
+### Creating Releases of jfrm
 
 The release process is fully automated:
 

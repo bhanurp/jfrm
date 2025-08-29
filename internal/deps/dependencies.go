@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jfrog/gofrog/version"
+	"github.com/blang/semver/v4"
 	"golang.org/x/mod/modfile"
 )
 
@@ -104,8 +104,12 @@ func IsAllowedDependency(module string) bool {
 
 // IsNewerVersion checks if the latest version is newer than current
 func IsNewerVersion(current, latest string) bool {
-	currentVersion := version.NewVersion(current)
-	return currentVersion.Compare(latest) > 0
+	c, err1 := semver.ParseTolerant(current)
+	l, err2 := semver.ParseTolerant(latest)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return l.GT(c)
 }
 
 // UpdateDependency updates a dependency to the latest version

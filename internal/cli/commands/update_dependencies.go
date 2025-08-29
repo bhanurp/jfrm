@@ -3,11 +3,16 @@ package commands
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/bhanurp/jfrm/internal/deps"
 	"github.com/bhanurp/jfrm/internal/github"
 	"github.com/bhanurp/jfrm/internal/report"
+	"github.com/bhanurp/jfrm/internal/version"
 	"github.com/urfave/cli/v2"
 )
 
@@ -28,20 +33,55 @@ func UpdateDependencies() *cli.Command {
 				Aliases: []string{"p"},
 				Usage:   "Create a pull request with the changes",
 			},
+			&cli.StringFlag{
+				Name:  "remote",
+				Usage: "Base in form <remote>/<branch> (default: upstream/dev; upstream/main for jfrog/jfrog-cli-artifactory)",
+			},
+			&cli.StringFlag{
+				Name:  "new-branch",
+				Usage: "Override the generated branch name (e.g., update-dependencies-1.2.3)",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			dryRun := c.Bool("dry-run")
 			createPR := c.Bool("create-pr")
 
-			if dryRun {
-				log.Println("Running in Dry Run mode (No changes will be made)")
-			}
-
-			// Get repository information
+			// Determine default base remote/branch
 			repo, err := deps.GetRepoName()
 			if err != nil {
 				return fmt.Errorf("failed to detect repository: %w", err)
 			}
+			baseRemote, baseBranch := resolveDefaultBase(repo)
+
+			if userBase := c.String("remote"); strings.TrimSpace(userBase) != "" {
+				parts := strings.SplitN(userBase, "/", 2)
+				if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+					return fmt.Errorf("invalid --remote value; expected <remote>/<branch>")
+				}
+				baseRemote, baseBranch = parts[0], parts[1]
+			}
+
+			// Preflight validation before any changes
+			if err := runPreflightChecks(createPR); err != nil {
+				return err
+			}
+
+			// Validate remote exists and branch fetchable
+			if out, err := exec.Command("git", "remote").CombinedOutput(); err != nil {
+				return fmt.Errorf("failed to list remotes: %w", err)
+			} else if !strings.Contains(string(out), baseRemote) {
+				return fmt.Errorf("remote '%s' not found; configure it first", baseRemote)
+			}
+			// Fetch the base branch refs (best-effort)
+			_ = exec.Command("git", "fetch", baseRemote, baseBranch).Run()
+			if err := exec.Command("git", "rev-parse", "--verify", fmt.Sprintf("refs/remotes/%s/%s", baseRemote, baseBranch)).Run(); err != nil {
+				return fmt.Errorf("base '%s/%s' not found after fetch", baseRemote, baseBranch)
+			}
+
+			if dryRun {
+				log.Println("Running in Dry Run mode (No changes will be made)")
+			}
+
 			log.Printf("Detected repository: %s\n", repo)
 
 			// Get current dependencies
@@ -71,19 +111,13 @@ func UpdateDependencies() *cli.Command {
 				}
 			}
 
-			if len(updates) == 0 {
-				log.Println("No dependencies to update!")
-				return nil
-			}
-
-			// Get latest release information
+			// Get latest release information and merged PRs (for next version prediction)
 			tag, lastReleaseSHA, releasedTime, err := github.GetLatestReleaseVersionAndCommitSHA(repo)
 			if err != nil {
 				return fmt.Errorf("failed to get latest release: %w", err)
 			}
 			log.Printf("Latest release: %s (Commit: %s) released on [%s]\n", tag, lastReleaseSHA, releasedTime.GoString())
 
-			// Get merged PRs since last release
 			prs, err := github.GetAllMergedPRs(repo, releasedTime)
 			if err != nil {
 				log.Printf("Error fetching merged PRs: %v\n", err)
@@ -105,7 +139,35 @@ func UpdateDependencies() *cli.Command {
 
 			// Create PR if requested
 			if createPR {
-				return createPullRequestWithUpdates(repo, updates)
+				releaseType := version.DetermineReleaseType(prs)
+				nextVersion := version.GetNextVersion(tag, releaseType)
+				if strings.TrimSpace(nextVersion) == "" {
+					nextVersion = "next"
+				}
+				branchName := buildBranchName(c.String("new-branch"), nextVersion)
+
+				// Create local branch from the remote base
+				if err := exec.Command("git", "checkout", "-B", branchName, fmt.Sprintf("%s/%s", baseRemote, baseBranch)).Run(); err != nil {
+					return fmt.Errorf("failed to create branch from %s/%s: %w", baseRemote, baseBranch, err)
+				}
+				if err := deps.GitExec("add", "go.mod", "go.sum"); err != nil {
+					return fmt.Errorf("failed to add files: %w", err)
+				}
+				if err := deps.GitExec("commit", "-m", fmt.Sprintf("chore(%s): update dependencies to latest versions", nextVersion)); err != nil {
+					return fmt.Errorf("failed to commit: %w", err)
+				}
+				if err := deps.GitExec("push", "origin", branchName, "--force-with-lease"); err != nil {
+					return fmt.Errorf("failed to push: %w", err)
+				}
+
+				token := os.Getenv("GITHUB_TOKEN")
+				prID, err := github.CreatePullRequest(branchName, baseBranch, repo, token)
+				if err != nil {
+					return fmt.Errorf("failed to create PR: %w", err)
+				}
+				if err := github.GetPullRequestStatus(prID, repo, token); err != nil {
+					log.Printf("Failed to get PR status: %v", err)
+				}
 			}
 
 			return nil
@@ -113,31 +175,70 @@ func UpdateDependencies() *cli.Command {
 	}
 }
 
-func createPullRequestWithUpdates(repo string, updates map[string]string) error {
-	branchName := "update-dependencies"
-	if err := deps.GitExec("checkout", "-b", branchName); err != nil {
-		return fmt.Errorf("failed to create branch: %w", err)
+// Helpers kept unexported for testing
+func resolveDefaultBase(repo string) (remote, branch string) {
+	remote, branch = "upstream", "dev"
+	if repo == "jfrog/jfrog-cli-artifactory" {
+		branch = "main"
 	}
-	if err := deps.GitExec("add", "go.mod", "go.sum"); err != nil {
-		return fmt.Errorf("failed to add files: %w", err)
+	return
+}
+
+func buildBranchName(override, next string) string {
+	if strings.TrimSpace(override) != "" {
+		return override
 	}
-	if err := deps.GitExec("commit", "-m", "chore: update dependencies to latest versions"); err != nil {
-		return fmt.Errorf("failed to commit: %w", err)
-	}
-	if err := deps.GitExec("push", "origin", branchName); err != nil {
-		return fmt.Errorf("failed to push: %w", err)
+	return fmt.Sprintf("update-dependencies-%s", next)
+}
+
+// runPreflightChecks validates environment and repository state before any changes are attempted.
+func runPreflightChecks(requirePR bool) error {
+	var issues []string
+
+	// go.mod must exist
+	if _, err := os.Stat("go.mod"); err != nil {
+		issues = append(issues, "missing go.mod in project root")
 	}
 
-	token := os.Getenv("GITHUB_TOKEN")
-	prID, err := github.CreatePullRequest(branchName, repo, token)
-	if err != nil {
-		return fmt.Errorf("failed to create PR: %w", err)
+	// Ensure git is available
+	if _, err := exec.LookPath("git"); err != nil {
+		issues = append(issues, "git not found in PATH")
 	}
 
-	err = github.GetPullRequestStatus(prID, repo, token)
-	if err != nil {
-		log.Printf("Failed to get PR status: %v", err)
+	// Ensure go is available
+	if _, err := exec.LookPath("go"); err != nil {
+		issues = append(issues, "go not found in PATH")
 	}
 
+	// Working tree must be clean
+	if out, err := exec.Command("git", "status", "--porcelain").CombinedOutput(); err != nil {
+		issues = append(issues, fmt.Sprintf("failed to check git status: %v", err))
+	} else if strings.TrimSpace(string(out)) != "" {
+		issues = append(issues, "working tree not clean; commit or stash changes first")
+	}
+
+	// Remote origin must exist
+	if out, err := exec.Command("git", "remote", "get-url", "origin").CombinedOutput(); err != nil || strings.TrimSpace(string(out)) == "" {
+		issues = append(issues, "git remote 'origin' not configured")
+	}
+
+	// If PR creation requested, validate token and remote push access (best-effort)
+	if requirePR {
+		if os.Getenv("GITHUB_TOKEN") == "" {
+			issues = append(issues, "GITHUB_TOKEN is not set (required for PR creation)")
+		}
+		// Quick GitHub API reachability check
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get("https://api.github.com/rate_limit")
+		if err != nil || resp.StatusCode >= 400 {
+			issues = append(issues, "cannot reach GitHub API (network/auth issue)")
+		} else {
+			_ = resp.Body.Close()
+		}
+	}
+
+	if len(issues) > 0 {
+		return fmt.Errorf("preflight checks failed:\n- %s", strings.Join(issues, "\n- "))
+	}
 	return nil
 }

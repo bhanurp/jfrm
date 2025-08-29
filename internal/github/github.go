@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-const githubAPI = "https://api.github.com/repos"
+// githubReposBase allows tests to override the API base (default is GitHub REST)
+var githubReposBase = "https://api.github.com/repos"
 
 // GetLatestReleaseVersionAndCommitSHA fetches the latest Go module version and its commit SHA
 func GetLatestReleaseVersionAndCommitSHA(module string) (string, string, time.Time, error) {
@@ -30,10 +31,10 @@ func GetLatestReleaseVersionAndCommitSHA(module string) (string, string, time.Ti
 	return latestVersion, commitSHA, releasedTime, nil
 }
 
-// fetchLatestVersion retrieves the latest tagged release version from the Go proxy
+// fetchLatestVersion retrieves the latest tagged release version
 func fetchLatestVersion(module string) (string, time.Time, error) {
 	fmt.Printf("Fetching latest release for module: %s\n", module)
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", module)
+	url := fmt.Sprintf("%s/%s/releases/latest", githubReposBase, module)
 	fmt.Println("Fetching latest release version using ", url)
 	client := &http.Client{Timeout: 15 * time.Second}
 
@@ -72,9 +73,9 @@ func fetchLatestVersion(module string) (string, time.Time, error) {
 	return data.TagName, data.PublishedAt, nil
 }
 
-// fetchCommitSHA retrieves the commit SHA for a given version from the Go proxy
+// fetchCommitSHA retrieves the commit SHA for a given version
 func fetchCommitSHA(module, version string) (string, error) {
-	url := fmt.Sprintf("%s/%s/git/refs/tags/%s", githubAPI, module, version)
+	url := fmt.Sprintf("%s/%s/git/refs/tags/%s", githubReposBase, module, version)
 	fmt.Printf("Fetching commit SHA for %s\n", url)
 	client := &http.Client{Timeout: 30 * time.Second} // Increased timeout to 30 seconds
 
@@ -140,7 +141,7 @@ func GetAllMergedPRs(repo string, lastReleaseDate time.Time) ([]string, error) {
 	if repo == "jfrog/jfrog-cli-artifactory" {
 		base = "main"
 	}
-	url := fmt.Sprintf("%s/%s/pulls?state=closed&base=%s", githubAPI, repo, base)
+	url := fmt.Sprintf("%s/%s/pulls?state=closed&base=%s", githubReposBase, repo, base)
 	fmt.Printf("Fetching all closed PRs for repo: %s URL used : %s\n", repo, url)
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
@@ -191,15 +192,15 @@ func GetAllMergedPRs(repo string, lastReleaseDate time.Time) ([]string, error) {
 }
 
 // CreatePullRequest creates a pull request
-func CreatePullRequest(branch, repo, token string) (string, error) {
+func CreatePullRequest(branch, base, repo, token string) (string, error) {
 	prBody := map[string]string{
 		"title": "Update dependencies",
 		"head":  branch,
-		"base":  "main",
+		"base":  base,
 		"body":  "This PR updates Go dependencies to the latest versions.",
 	}
 	jsonBody, _ := json.Marshal(prBody)
-	req, _ := http.NewRequest("POST", fmt.Sprintf("https://api.github.com/repos/%s/pulls", repo), bytes.NewBuffer(jsonBody))
+	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/%s/pulls", githubReposBase, repo), bytes.NewBuffer(jsonBody))
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -227,7 +228,7 @@ func CreatePullRequest(branch, repo, token string) (string, error) {
 
 // GetPullRequestStatus fetches the status of a pull request
 func GetPullRequestStatus(prID, repo, token string) error {
-	req, _ := http.NewRequest("GET", fmt.Sprintf("https://api.github.com/repos/%s/pulls/%s", repo, prID), nil)
+	req, _ := http.NewRequest("GET", fmt.Sprintf("%s/%s/pulls/%s", githubReposBase, repo, prID), nil)
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Content-Type", "application/json")
 
