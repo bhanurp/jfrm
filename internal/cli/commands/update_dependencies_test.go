@@ -21,4 +21,3 @@ func TestBuildBranchName(t *testing.T) {
 		t.Fatalf("override not respected: %s", got)
 	}
 }
-

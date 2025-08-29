@@ -41,3 +41,20 @@ func TestGetDependencies_Parse(t *testing.T) {
 	}
 }
 
+func TestExtractRepoSlug(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com/owner/repo.git": "owner/repo",
+		"https://github.com/owner/repo":     "owner/repo",
+		"ssh://git@github.com/owner/repo":   "owner/repo",
+		"git@github.com:owner/repo.git":     "owner/repo",
+	}
+	for in, want := range cases {
+		got, err := extractRepoSlug(in)
+		if err != nil {
+			t.Fatalf("unexpected error for %s: %v", in, err)
+		}
+		if got != want {
+			t.Fatalf("expected %s, got %s", want, got)
+		}
+	}
+}

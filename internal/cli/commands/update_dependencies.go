@@ -53,7 +53,8 @@ func UpdateDependencies() *cli.Command {
 			}
 			baseRemote, baseBranch := resolveDefaultBase(repo)
 
-			if userBase := c.String("remote"); strings.TrimSpace(userBase) != "" {
+			userBase := strings.TrimSpace(c.String("remote"))
+			if userBase != "" {
 				parts := strings.SplitN(userBase, "/", 2)
 				if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 					return fmt.Errorf("invalid --remote value; expected <remote>/<branch>")
@@ -66,13 +67,29 @@ func UpdateDependencies() *cli.Command {
 				return err
 			}
 
-			// Validate remote exists and branch fetchable
-			if out, err := exec.Command("git", "remote").CombinedOutput(); err != nil {
+			// Validate remote exists; if missing and user did not specify --remote, fallback to origin
+			remotesOut, err := exec.Command("git", "remote").CombinedOutput()
+			if err != nil {
 				return fmt.Errorf("failed to list remotes: %w", err)
-			} else if !strings.Contains(string(out), baseRemote) {
-				return fmt.Errorf("remote '%s' not found; configure it first", baseRemote)
 			}
-			// Fetch the base branch refs (best-effort)
+			remotes := string(remotesOut)
+			if !strings.Contains(remotes, baseRemote) {
+				if userBase != "" {
+					return fmt.Errorf("remote '%s' not found; configure it first", baseRemote)
+				}
+				// fallback to origin
+				baseRemote = "origin"
+				if !strings.Contains(remotes, baseRemote) {
+					return fmt.Errorf("remote '%s' not found; configure it first", baseRemote)
+				}
+				if detected := detectDefaultRemoteBranch(baseRemote); detected != "" {
+					if parts := strings.SplitN(detected, "/", 2); len(parts) == 2 {
+						baseBranch = parts[1]
+					}
+				}
+			}
+
+			// Fetch the base branch refs (best-effort) and verify
 			_ = exec.Command("git", "fetch", baseRemote, baseBranch).Run()
 			if err := exec.Command("git", "rev-parse", "--verify", fmt.Sprintf("refs/remotes/%s/%s", baseRemote, baseBranch)).Run(); err != nil {
 				return fmt.Errorf("base '%s/%s' not found after fetch", baseRemote, baseBranch)
@@ -132,9 +149,22 @@ func UpdateDependencies() *cli.Command {
 				}
 			}
 
+			// If there are no dependency updates and no newly merged PRs, no need to release
+			if len(updates) == 0 && len(prs) == 0 {
+				log.Println("No dependency updates and no merged changes since last release — no new release needed.")
+				return nil
+			}
+
 			// Generate report if in dry-run mode
 			if dryRun {
 				return report.GenerateDryRunReport(repo, prs, tag)
+			}
+
+			// Ensure go.sum is updated after any changes
+			if len(updates) > 0 {
+				if err := exec.Command("go", "mod", "tidy").Run(); err != nil {
+					log.Printf("warning: failed running 'go mod tidy': %v", err)
+				}
 			}
 
 			// Create PR if requested
@@ -189,6 +219,32 @@ func buildBranchName(override, next string) string {
 		return override
 	}
 	return fmt.Sprintf("update-dependencies-%s", next)
+}
+
+func detectDefaultRemoteBranch(remote string) string {
+	// Try symbolic-ref to find remote HEAD like "origin/main"
+	out, err := exec.Command("git", "symbolic-ref", "--quiet", "--short", fmt.Sprintf("refs/remotes/%s/HEAD", remote)).CombinedOutput()
+	if err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	// Fallback: git remote show <remote> and parse "HEAD branch: <name>"
+	showOut, err := exec.Command("git", "remote", "show", remote).CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(showOut), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "HEAD branch:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				name := strings.TrimSpace(parts[1])
+				if name != "" {
+					return fmt.Sprintf("%s/%s", remote, name)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // runPreflightChecks validates environment and repository state before any changes are attempted.

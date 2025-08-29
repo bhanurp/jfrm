@@ -27,21 +27,35 @@ var allowedDeps = map[string]bool{
 
 var dryRunReport []string
 
-// GetRepoName extracts the repository name from git remote
+// GetRepoName extracts the repository name from git remote (supports HTTPS and SSH).
+// It prefers the 'upstream' remote; falls back to 'origin' if not available.
 func GetRepoName() (string, error) {
-	output, err := execCmd("git", "remote", "get-url", "upstream")
-	if err != nil {
-		return "", err
+	out, err := execCmd("git", "remote", "get-url", "upstream")
+	remoteURL := strings.TrimSpace(out)
+	if err != nil || remoteURL == "" {
+		// Fallback to origin
+		out, err = execCmd("git", "remote", "get-url", "origin")
+		if err != nil {
+			return "", err
+		}
+		remoteURL = strings.TrimSpace(out)
 	}
-	re := regexp.MustCompile(`[:/]([^/]+/[^/]+)(?:\.git)?$`)
-	fmt.Println("Finding git repo name")
-	fmt.Printf("%s\n", output)
-	fmt.Println("---------------------")
-	matches := re.FindStringSubmatch(output)
-	if len(matches) > 1 {
-		return matches[1], nil
+	return extractRepoSlug(remoteURL)
+}
+
+// extractRepoSlug normalizes a remote URL (HTTPS/SSH) to "owner/repo".
+func extractRepoSlug(remoteURL string) (string, error) {
+	// Match the last two path segments before optional .git
+	// Examples handled:
+	//   https://github.com/owner/repo.git
+	//   ssh://git@github.com/owner/repo
+	//   git@github.com:owner/repo.git
+	re := regexp.MustCompile(`[:/]{1}([^/]+/[^/]+?)(?:\.git)?$`)
+	m := re.FindStringSubmatch(remoteURL)
+	if len(m) > 1 {
+		return m[1], nil
 	}
-	return "", fmt.Errorf("could not determine repo name")
+	return "", fmt.Errorf("could not parse repository from remote: %s", remoteURL)
 }
 
 // execCmd executes a command and returns the output
